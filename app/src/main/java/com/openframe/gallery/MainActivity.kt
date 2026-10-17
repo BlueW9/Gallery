@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
-        setSecure(prefs.getBoolean("secure", false))
+        applySecure(prefs.getBoolean("secure", false))
         intent?.data?.let { external = Item(it, intent.type?.startsWith("video") == true); opened = 0 }
         perm.launch(
             if (Build.VERSION.SDK_INT >= 33) arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
@@ -77,7 +77,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun setSecure(on: Boolean) {
+    private fun applySecure(on: Boolean) {
         secure = on
         if (on) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -126,7 +126,7 @@ class MainActivity : ComponentActivity() {
                 verticalAlignment = Alignment.CenterVertically) {
                 Text("Gallery", color = Purple, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 Text("Block screenshots ", color = Purple)
-                Switch(secure, { setSecure(it) }, colors = SwitchDefaults.colors(
+                Switch(secure, { applySecure(it) }, colors = SwitchDefaults.colors(
                     checkedThumbColor = Purple, checkedTrackColor = PrussianLight, uncheckedTrackColor = Bg))
             }
             LazyVerticalGrid(GridCells.Fixed(3), Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(2.dp),
