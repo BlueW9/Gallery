@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
@@ -45,6 +46,7 @@ private val Purple = Color(0xFFB388FF)     // text
 private val Prussian = Color(0xFF003153)   // bars / details
 private val PrussianLight = Color(0xFF2B6C99)
 
+@OptIn(ExperimentalFoundationApi::class)
 class MainActivity : ComponentActivity() {
     private var items by mutableStateOf(listOf<Item>())
     private var opened by mutableStateOf<Int?>(null)
