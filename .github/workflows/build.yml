@@ -15,12 +15,19 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.7' }
-      - run: gradle assembleDebug
+      - run: gradle assembleRelease
+      - name: Verify the APK has no internet permission
+        run: |
+          AAPT2=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -1)
+          if [ -z "$AAPT2" ]; then echo "aapt2 not found, skipping"; exit 0; fi
+          "$AAPT2" dump permissions app/build/outputs/apk/release/app-release.apk | tee perms.txt
+          ! grep -q "android.permission.INTERNET" perms.txt
+      - run: cp app/build/outputs/apk/release/app-release.apk Gallery.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenFrame-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: Gallery-apk
+          path: Gallery.apk
       - if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/debug/*.apk
+          files: Gallery.apk
