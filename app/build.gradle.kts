@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "com.openframe.gallery"
     compileSdk = 34
-    defaultConfig { applicationId = "com.openframe.gallery"; minSdk = 30; targetSdk = 34; versionCode = 2; versionName = "0.1.1" }
+    defaultConfig { applicationId = "com.openframe.gallery"; minSdk = 30; targetSdk = 34; versionCode = 3; versionName = "0.2.0" }
     buildTypes {
         release {
             isMinifyEnabled = false

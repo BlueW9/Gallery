@@ -3,8 +3,10 @@ package com.openframe.gallery
 import android.Manifest
 import android.app.WallpaperManager
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -42,6 +44,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -49,6 +52,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -92,6 +96,9 @@ class MainActivity : ComponentActivity() {
     private var loaded by mutableStateOf(false)
     private var selected by mutableStateOf(setOf<String>())
     private var wallTarget by mutableStateOf<Uri?>(null)
+    private var editing by mutableStateOf<Item?>(null)
+    private var saving by mutableStateOf(false)
+    private var pendingReplace: Pair<Uri, List<Op>>? = null
     private var gen = 0
     private val perm = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refresh() }
     private val del = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
@@ -100,6 +107,12 @@ class MainActivity : ComponentActivity() {
             refresh()
             if (external != null) finish() else opened = null
         }
+    }
+
+    private val writeReq = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+        val p = pendingReplace
+        pendingReplace = null
+        if (it.resultCode == RESULT_OK && p != null) runSave(p.first, p.second, true)
     }
 
     override fun onCreate(b: Bundle?) {
@@ -201,6 +214,90 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    // ---------- photo editing (crop / blur) ----------
+
+    private fun canReplace(uri: Uri): Boolean {
+        val m = contentResolver.getType(uri)
+        return uri.authority == MediaStore.AUTHORITY && m in setOf("image/jpeg", "image/png", "image/webp")
+    }
+
+    private fun startSave(uri: Uri, ops: List<Op>, replace: Boolean) {
+        if (!replace) { runSave(uri, ops, false); return }
+        // Replacing a photo needs the system's own permission prompt for that photo.
+        try {
+            val s = MediaStore.createWriteRequest(contentResolver, listOf(uri)).intentSender
+            pendingReplace = uri to ops
+            writeReq.launch(IntentSenderRequest.Builder(s).build())
+        } catch (e: Exception) {
+            Toast.makeText(this, "This photo can only be saved as a new copy", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun runSave(uri: Uri, ops: List<Op>, replace: Boolean) {
+        saving = true
+        Thread {
+            var message = ""
+            try {
+                val srcMime = contentResolver.getType(uri) ?: "image/jpeg"
+                val src = ImageOps.decode(contentResolver, uri, 25_000_000L)
+                val out = ImageOps.render(src, ops)
+                if (replace) {
+                    val bytes = ImageOps.encodeBytes(out, srcMime)
+                        ?: throw IllegalStateException("could not encode the image")
+                    val os = contentResolver.openOutputStream(uri, "wt")
+                        ?: throw IllegalStateException("could not write the file")
+                    os.use { it.write(bytes) }
+                    message = "Photo updated"
+                } else {
+                    saveCopy(out, srcMime)
+                    message = "Saved as a new copy"
+                }
+            } catch (e: Throwable) {
+                message = "Could not save: " + (e.message ?: "unknown error")
+            }
+            val ok = message == "Photo updated" || message == "Saved as a new copy"
+            runOnUiThread {
+                saving = false
+                Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
+                if (ok) {
+                    editing = null
+                    if (replace) {
+                        Thumbs.cache.remove(uri.toString())
+                        applicationContext.imageLoader.memoryCache?.clear()
+                    } else if (external == null) {
+                        opened = null
+                    }
+                    refresh()
+                }
+            }
+        }.start()
+    }
+
+    private fun saveCopy(bmp: Bitmap, srcMime: String) {
+        val mime = if (srcMime == "image/png" || srcMime == "image/webp") srcMime else "image/jpeg"
+        val ext = when (mime) { "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg" }
+        val bytes = ImageOps.encodeBytes(bmp, mime) ?: throw IllegalStateException("could not encode the image")
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val cv = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "Edited_$stamp.$ext")
+            put(MediaStore.Images.Media.MIME_TYPE, mime)
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Gallery")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val col = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val u = contentResolver.insert(col, cv) ?: throw IllegalStateException("could not create the file")
+        try {
+            val os = contentResolver.openOutputStream(u) ?: throw IllegalStateException("could not write the file")
+            os.use { it.write(bytes) }
+            cv.clear()
+            cv.put(MediaStore.Images.Media.IS_PENDING, 0)
+            contentResolver.update(u, cv, null, null)
+        } catch (e: Exception) {
+            contentResolver.delete(u, null, null)
+            throw e
+        }
+    }
+
     @Composable
     private fun App() {
         val list = external?.let { listOf(it) } ?: media
@@ -209,7 +306,15 @@ class MainActivity : ComponentActivity() {
             if (o != null) { if (external != null) finish() else opened = null }
             else selected = emptySet()
         }
-        if (o != null && list.isNotEmpty()) Viewer(list, o.coerceIn(0, list.size - 1)) else Grid()
+        val ed = editing
+        if (ed != null) {
+            val replaceOk = remember(ed.uri) { canReplace(ed.uri) }
+            Editor(
+                uri = ed.uri, canReplace = replaceOk, saving = saving,
+                onClose = { editing = null },
+                onSave = { ops, replace -> startSave(ed.uri, ops, replace) }
+            )
+        } else if (o != null && list.isNotEmpty()) Viewer(list, o.coerceIn(0, list.size - 1)) else Grid()
         val w = wallTarget
         if (w != null) {
             AlertDialog(
@@ -365,6 +470,7 @@ class MainActivity : ComponentActivity() {
             }
             if (bars) {
                 val cur = list[pager.currentPage.coerceIn(0, list.size - 1)]
+                val canEdit = remember(cur.uri) { ctx.contentResolver.getType(cur.uri) != "image/gif" }
                 Row(
                     Modifier.align(Alignment.TopCenter).fillMaxWidth()
                         .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)))
@@ -375,10 +481,14 @@ class MainActivity : ComponentActivity() {
                     TopBtn("✕") { if (external != null) finish() else opened = null }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (!cur.video) {
-                            TopBtn("Wallpaper") { wallTarget = cur.uri }
-                            Spacer(Modifier.width(8.dp))
+                            if (canEdit) {
+                                TopBtn("Edit", 14.dp) { editing = cur }
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            TopBtn("Wallpaper", 14.dp) { wallTarget = cur.uri }
+                            Spacer(Modifier.width(6.dp))
                         }
-                        TopBtn("Delete") { delete(listOf(cur.uri)) }
+                        TopBtn("Delete", 14.dp) { delete(listOf(cur.uri)) }
                     }
                 }
                 Text(
@@ -414,11 +524,11 @@ private fun Thumb(uri: Uri, modifier: Modifier, scale: ContentScale = ContentSca
 }
 
 @Composable
-private fun TopBtn(label: String, onClick: () -> Unit) {
+private fun TopBtn(label: String, pad: Dp = 18.dp, onClick: () -> Unit) {
     Text(
         label, color = Purple, fontSize = 15.sp, fontWeight = FontWeight.Medium,
         modifier = Modifier.clip(RoundedCornerShape(50)).background(Prussian.copy(alpha = 0.9f))
-            .clickable { onClick() }.padding(horizontal = 18.dp, vertical = 10.dp)
+            .clickable { onClick() }.padding(horizontal = pad, vertical = 10.dp)
     )
 }
 

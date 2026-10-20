@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
-    <application android:label="Gallery" android:icon="@mipmap/ic_launcher"
+    <application android:largeHeap="true" android:label="Gallery" android:icon="@mipmap/ic_launcher"
         android:theme="@style/Theme.Gallery" android:allowBackup="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
