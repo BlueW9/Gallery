@@ -23,6 +23,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,10 +42,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -452,21 +462,17 @@ class MainActivity : ComponentActivity() {
         val ctx = LocalContext.current
         val pager = rememberPagerState(start) { list.size }
         var bars by remember { mutableStateOf(true) }
+        var zoomed by remember { mutableStateOf(false) }
+        LaunchedEffect(pager.currentPage) { zoomed = false }
         Box(
             Modifier.fillMaxSize().background(Color.Black)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { bars = !bars }
         ) {
-            HorizontalPager(pager, Modifier.fillMaxSize()) { i ->
+            // While a photo is zoomed in, one finger moves the photo instead of swiping to the next one.
+            HorizontalPager(pager, Modifier.fillMaxSize(), userScrollEnabled = !zoomed) { i ->
                 val m = list[i]
                 if (m.video) VideoPlayer(m.uri)
-                else Box(Modifier.fillMaxSize()) {
-                    // The small thumbnail shows instantly; the sharp version (up to 4K) replaces it when ready.
-                    Thumb(m.uri, Modifier.fillMaxSize(), ContentScale.Fit, Color.Transparent)
-                    AsyncImage(
-                        ImageRequest.Builder(ctx).data(m.uri).size(3840, 3840).build(),
-                        null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()
-                    )
-                }
+                else ZoomableImage(m.uri, pager.currentPage == i) { zoomed = it }
             }
             if (bars) {
                 val cur = list[pager.currentPage.coerceIn(0, list.size - 1)]
@@ -498,6 +504,97 @@ class MainActivity : ComponentActivity() {
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 )
             }
+        }
+    }
+}
+
+// Pinch to zoom (up to 6x), drag to move while zoomed, double tap to zoom in and out.
+@Composable
+private fun ZoomableImage(uri: Uri, current: Boolean, onZoomed: (Boolean) -> Unit) {
+    val ctx = LocalContext.current
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val notify by rememberUpdatedState(onZoomed)
+    LaunchedEffect(current) {
+        if (!current) { scale = 1f; offset = Offset.Zero }
+    }
+    Box(
+        Modifier.fillMaxSize().pointerInput(Unit) {
+            var lastTap = 0L
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val w = size.width.toFloat()
+                val h = size.height.toFloat()
+                val c = Offset(w / 2f, h / 2f)
+                var moved = false
+                var multi = false
+                do {
+                    val event = awaitPointerEvent()
+                    val pressed = event.changes.filter { it.pressed }
+                    if (pressed.size > 1) multi = true
+                    // One finger at normal size is left alone, so swiping between photos and tapping still work.
+                    if (pressed.size > 1 || scale > 1.01f) {
+                        val zoom = event.calculateZoom()
+                        val pan = event.calculatePan()
+                        if (zoom != 1f || pan != Offset.Zero) {
+                            val centroid = event.calculateCentroid()
+                            val cen = if (centroid.isSpecified) centroid else c
+                            val newScale = (scale * zoom).coerceIn(1f, 6f)
+                            val z = newScale / scale
+                            val rel = cen - c
+                            val t = rel - (rel - offset) * z + pan
+                            val maxX = w * (newScale - 1f) / 2f
+                            val maxY = h * (newScale - 1f) / 2f
+                            scale = newScale
+                            offset = Offset(t.x.coerceIn(-maxX, maxX), t.y.coerceIn(-maxY, maxY))
+                            notify(scale > 1.01f)
+                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                        }
+                    }
+                    val p = pressed.firstOrNull()?.position ?: down.position
+                    if ((p - down.position).getDistance() > viewConfiguration.touchSlop) moved = true
+                } while (event.changes.any { it.pressed })
+
+                if (!moved && !multi) {
+                    val now = down.uptimeMillis
+                    if (now - lastTap < 300L) {
+                        lastTap = 0L
+                        if (scale > 1.01f) {
+                            scale = 1f
+                            offset = Offset.Zero
+                        } else {
+                            val s = 2.5f
+                            val rel = down.position - c
+                            val maxX = w * (s - 1f) / 2f
+                            val maxY = h * (s - 1f) / 2f
+                            offset = Offset(
+                                (rel.x * (1f - s)).coerceIn(-maxX, maxX),
+                                (rel.y * (1f - s)).coerceIn(-maxY, maxY)
+                            )
+                            scale = s
+                        }
+                        notify(scale > 1.01f)
+                    } else {
+                        lastTap = now
+                    }
+                }
+            }
+        }
+    ) {
+        Box(
+            Modifier.fillMaxSize().graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = offset.x
+                translationY = offset.y
+            }
+        ) {
+            // The small thumbnail shows instantly; the sharp version (up to 4K) replaces it when ready.
+            Thumb(uri, Modifier.fillMaxSize(), ContentScale.Fit, Color.Transparent)
+            AsyncImage(
+                ImageRequest.Builder(ctx).data(uri).size(3840, 3840).build(),
+                null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }
