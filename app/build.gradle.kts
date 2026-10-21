@@ -2,11 +2,21 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "com.openframe.gallery"
     compileSdk = 34
-    defaultConfig { applicationId = "com.openframe.gallery"; minSdk = 30; targetSdk = 34; versionCode = 4; versionName = "0.2.1" }
+    defaultConfig { applicationId = "com.openframe.gallery"; minSdk = 30; targetSdk = 34; versionCode = 5; versionName = "0.2.2" }
+    signingConfigs {
+        create("release") {
+            // The key and the passwords come from GitHub Secrets while building. They are never in the code.
+            System.getenv("KEYSTORE_PATH")?.let { storeFile = file(it) }
+            storePassword = System.getenv("KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("KEY_ALIAS")
+            keyPassword = System.getenv("KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     lint { checkReleaseBuilds = false }
