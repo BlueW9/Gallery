@@ -33,5 +33,5 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
-    implementation("cz.adaptive:tesseract4android:4.7.0")
+    implementation("cz.adaptech.tesseract4android:tesseract4android:4.7.0")
 }
