@@ -30,7 +30,7 @@ object Ocr {
         try {
             if (!api.init(dataDir(ctx).absolutePath, LANGS)) return ""
             api.setImage(bmp)
-            return (api.utF8Text ?: "").trim()
+            return (api.getUTF8Text() ?: "").trim()
         } finally {
             api.recycle()
         }
