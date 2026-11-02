@@ -3,6 +3,8 @@ package com.openframe.gallery
 import android.Manifest
 import android.app.WallpaperManager
 import android.content.ContentUris
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -24,6 +26,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
@@ -65,6 +70,7 @@ import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 data class Item(val uri: Uri, val video: Boolean, val label: String)
@@ -464,6 +470,23 @@ class MainActivity : ComponentActivity() {
         var bars by remember { mutableStateOf(true) }
         var zoomed by remember { mutableStateOf(false) }
         LaunchedEffect(pager.currentPage) { zoomed = false }
+        val scope = rememberCoroutineScope()
+        var ocrText by remember { mutableStateOf<String?>(null) }
+        var ocrBusy by remember { mutableStateOf(false) }
+        fun readText(uri: Uri) {
+            if (ocrBusy) return
+            ocrBusy = true
+            scope.launch {
+                val text = try {
+                    withContext(Dispatchers.Default) {
+                        val bmp = ImageOps.decode(ctx.contentResolver, uri, 6_000_000L)
+                        Ocr.recognize(ctx, bmp)
+                    }
+                } catch (e: Exception) { "" }
+                ocrBusy = false
+                ocrText = text
+            }
+        }
         Box(
             Modifier.fillMaxSize().background(Color.Black)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { bars = !bars }
@@ -473,6 +496,26 @@ class MainActivity : ComponentActivity() {
                 val m = list[i]
                 if (m.video) VideoPlayer(m.uri)
                 else ZoomableImage(m.uri, pager.currentPage == i) { zoomed = it }
+            }
+            ocrText?.let { t ->
+                AlertDialog(
+                    onDismissRequest = { ocrText = null },
+                    title = { Text("Text in photo") },
+                    text = {
+                        Box(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                            SelectionContainer { Text(if (t.isEmpty()) "No text found." else t) }
+                        }
+                    },
+                    confirmButton = {
+                        if (t.isNotEmpty()) TextButton(onClick = {
+                            val cm = ctx.getSystemService(ClipboardManager::class.java)
+                            cm.setPrimaryClip(ClipData.newPlainText("text", t))
+                            Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
+                            ocrText = null
+                        }) { Text("Copy all") }
+                    },
+                    dismissButton = { TextButton(onClick = { ocrText = null }) { Text("Close") } }
+                )
             }
             if (bars) {
                 val cur = list[pager.currentPage.coerceIn(0, list.size - 1)]
@@ -491,6 +534,8 @@ class MainActivity : ComponentActivity() {
                                 TopBtn("Edit", 14.dp) { editing = cur }
                                 Spacer(Modifier.width(6.dp))
                             }
+                            TopBtn(if (ocrBusy) "..." else "Text", 14.dp) { readText(cur.uri) }
+                            Spacer(Modifier.width(6.dp))
                             TopBtn("Wallpaper", 14.dp) { wallTarget = cur.uri }
                             Spacer(Modifier.width(6.dp))
                         }

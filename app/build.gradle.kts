@@ -2,7 +2,7 @@ plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
     namespace = "com.openframe.gallery"
     compileSdk = 34
-    defaultConfig { applicationId = "com.openframe.gallery"; minSdk = 30; targetSdk = 34; versionCode = 5; versionName = "0.2.2" }
+    defaultConfig { applicationId = "com.openframe.gallery"; minSdk = 30; targetSdk = 34; versionCode = 6; versionName = "0.3.0" }
     signingConfigs {
         create("release") {
             // The key and the passwords come from GitHub Secrets while building. They are never in the code.
@@ -33,4 +33,5 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-ui:1.3.1")
+    implementation("cz.adaptive:tesseract4android:4.7.0")
 }
